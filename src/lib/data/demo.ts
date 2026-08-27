@@ -73,6 +73,7 @@ export function buildDemoDashboard(): DashboardData {
       id: "demo-user",
       fullName: "Aysel Məmmədova",
       email: "aysel@minima.demo",
+      avatarUrl: null,
       streakCount: 12,
     },
     habits: demoHabits,

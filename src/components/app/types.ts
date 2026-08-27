@@ -24,6 +24,7 @@ export type DashboardData = {
     id: string;
     fullName: string;
     email: string;
+    avatarUrl: string | null;
     streakCount: number;
   };
   habits: Habit[];

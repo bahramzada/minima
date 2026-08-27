@@ -14,6 +14,7 @@ export type Database = {
           id: string;
           email: string;
           full_name: string | null;
+          avatar_url: string | null;
           created_at: string;
           streak_count: number;
           last_active_date: string | null;
@@ -22,6 +23,7 @@ export type Database = {
           id: string;
           email: string;
           full_name?: string | null;
+          avatar_url?: string | null;
           created_at?: string;
           streak_count?: number;
           last_active_date?: string | null;
@@ -101,7 +103,12 @@ export type Database = {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      delete_own_account: {
+        Args: Record<PropertyKey, never>;
+        Returns: undefined;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

@@ -28,6 +28,10 @@ import {
   HabitModal,
   type HabitInput,
 } from "@/components/app/habit-modal";
+import {
+  ProfileModal,
+  type IdentityInput,
+} from "@/components/app/profile-modal";
 import { SuccessOverlay } from "@/components/app/success-overlay";
 import type {
   AiTaskPayload,
@@ -58,6 +62,11 @@ const moodChoices = [
 const moodColors = ["#e7e6dd", "#d7e0c4", "#b3c795", "#86a262", "#5a6b49"];
 
 const habitTints = ["#eef1e4", "#eef3e2", "#e4eef1", "#f1e9e4"];
+
+const analyticsTargets = {
+  completions: 5,
+  moodDays: 3,
+};
 
 function initials(name: string) {
   return (
@@ -102,6 +111,7 @@ export function MinimaApp({
   const [modalOpen, setModalOpen] = useState(false);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [modalBusy, setModalBusy] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [chat, setChat] = useState<ChatMessage[]>([
     {
@@ -132,6 +142,7 @@ export function MinimaApp({
             const profile = JSON.parse(storedProfile) as {
               fullName?: string;
               email?: string;
+              avatarUrl?: string | null;
             };
             setData((current) => ({
               ...current,
@@ -139,6 +150,7 @@ export function MinimaApp({
                 ...current.profile,
                 fullName: profile.fullName || current.profile.fullName,
                 email: profile.email || current.profile.email,
+                avatarUrl: profile.avatarUrl ?? current.profile.avatarUrl,
               },
             }));
           }
@@ -444,11 +456,154 @@ export function MinimaApp({
     router.refresh();
   }
 
+  async function saveIdentity(input: IdentityInput) {
+    let avatarUrl = data.profile.avatarUrl;
+
+    if (realBackend) {
+      const supabase = createBrowserSupabaseClient();
+      if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
+
+      const avatarPath = `${data.profile.id}/avatar`;
+      if (input.removeAvatar) {
+        const { error } = await supabase.storage
+          .from("avatars")
+          .remove([avatarPath]);
+        if (error) throw error;
+        avatarUrl = null;
+      } else if (input.avatarFile) {
+        const { error } = await supabase.storage
+          .from("avatars")
+          .upload(avatarPath, input.avatarFile, {
+            cacheControl: "3600",
+            contentType: input.avatarFile.type,
+            upsert: true,
+          });
+        if (error) throw error;
+
+        const publicUrl = supabase.storage
+          .from("avatars")
+          .getPublicUrl(avatarPath).data.publicUrl;
+        avatarUrl = `${publicUrl}?v=${Date.now()}`;
+      }
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: input.fullName,
+          avatar_url: avatarUrl,
+        })
+        .eq("id", data.profile.id);
+      if (error) throw error;
+    } else {
+      if (input.removeAvatar) {
+        avatarUrl = null;
+      } else if (input.avatarFile) {
+        avatarUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("Şəkil oxunmadı."));
+          reader.readAsDataURL(input.avatarFile!);
+        });
+      }
+    }
+
+    const nextProfile = {
+      ...data.profile,
+      fullName: input.fullName,
+      avatarUrl,
+    };
+    setData((current) => ({ ...current, profile: nextProfile }));
+
+    if (mode === "demo") {
+      localStorage.setItem(
+        "minima-demo-profile",
+        JSON.stringify({
+          fullName: nextProfile.fullName,
+          email: nextProfile.email,
+          avatarUrl: nextProfile.avatarUrl,
+        }),
+      );
+    }
+  }
+
+  async function changeProfileEmail(email: string) {
+    if (!realBackend) {
+      const nextProfile = { ...data.profile, email };
+      setData((current) => ({ ...current, profile: nextProfile }));
+      localStorage.setItem(
+        "minima-demo-profile",
+        JSON.stringify({
+          fullName: nextProfile.fullName,
+          email: nextProfile.email,
+          avatarUrl: nextProfile.avatarUrl,
+        }),
+      );
+      return;
+    }
+
+    const supabase = createBrowserSupabaseClient();
+    if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
+    const { data: authData, error } = await supabase.auth.updateUser({ email });
+    if (error) throw error;
+
+    if (authData.user.email === email) {
+      setData((current) => ({
+        ...current,
+        profile: { ...current.profile, email },
+      }));
+    }
+  }
+
+  async function changeProfilePassword(password: string) {
+    if (!realBackend) return;
+    const supabase = createBrowserSupabaseClient();
+    if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+  }
+
+  async function deleteProfileAccount() {
+    if (!realBackend) {
+      localStorage.removeItem("minima-demo-state");
+      localStorage.removeItem("minima-demo-profile");
+      router.push("/");
+      router.refresh();
+      return;
+    }
+
+    const supabase = createBrowserSupabaseClient();
+    if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
+
+    const { error: avatarError } = await supabase.storage
+      .from("avatars")
+      .remove([`${data.profile.id}/avatar`]);
+    if (avatarError) throw avatarError;
+
+    const { error } = await supabase.rpc("delete_own_account");
+    if (error) throw error;
+
+    await supabase.auth.signOut({ scope: "local" });
+    router.push("/");
+    router.refresh();
+  }
+
   const regularDone = data.habits.filter((habit) => habit.completedToday).length;
   const allDone = data.habits.length > 0 && regularDone === data.habits.length;
   const firstName = data.profile.fullName.split(" ")[0] || "Dost";
   const activeWeekDays = data.weeklyActivity.filter(Boolean).length;
   const todayMood = data.moodLogs.find((mood) => mood.date === toDateKey());
+  const moodDaysTracked = new Set(data.moodLogs.map((mood) => mood.date)).size;
+  const hasAnalyticsData =
+    data.stats.completedTotal >= analyticsTargets.completions &&
+    moodDaysTracked >= analyticsTargets.moodDays;
+  const analyticsProgress = Math.round(
+    ((Math.min(data.stats.completedTotal, analyticsTargets.completions) /
+      analyticsTargets.completions +
+      Math.min(moodDaysTracked, analyticsTargets.moodDays) /
+        analyticsTargets.moodDays) /
+      2) *
+      100,
+  );
   const moodByDate = useMemo(
     () => new Map(data.moodLogs.map((mood) => [mood.date, mood])),
     [data.moodLogs],
@@ -489,12 +644,34 @@ export function MinimaApp({
             </div>
           </div>
           <div className="sidebar-user">
-            <span>{initials(data.profile.fullName)}</span>
-            <div>
-              <strong>{data.profile.fullName}</strong>
-              <small>{mode === "demo" ? "Demo plan" : "Pulsuz plan"}</small>
-            </div>
-            <button onClick={logout} aria-label="Çıxış et" title="Çıxış et">
+            <button
+              className="sidebar-profile-button"
+              onClick={() => setProfileModalOpen(true)}
+              aria-label="Profili düzənlə"
+            >
+              <span
+                className={data.profile.avatarUrl ? "has-image" : ""}
+                style={
+                  data.profile.avatarUrl
+                    ? {
+                        backgroundImage: `url(${JSON.stringify(data.profile.avatarUrl)})`,
+                      }
+                    : undefined
+                }
+              >
+                {!data.profile.avatarUrl && initials(data.profile.fullName)}
+              </span>
+              <div>
+                <strong>{data.profile.fullName}</strong>
+                <small>{mode === "demo" ? "Demo plan" : "Pulsuz plan"}</small>
+              </div>
+            </button>
+            <button
+              className="sidebar-logout-button"
+              onClick={logout}
+              aria-label="Çıxış et"
+              title="Çıxış et"
+            >
               <SignOut size={17} />
             </button>
           </div>
@@ -521,7 +698,20 @@ export function MinimaApp({
             </div>
             <div className="header-badges">
               <span className="streak-badge">🔥 {data.profile.streakCount}</span>
-              <span className="avatar-badge">{initials(data.profile.fullName)}</span>
+              <button
+                className={`avatar-badge ${data.profile.avatarUrl ? "has-image" : ""}`}
+                style={
+                  data.profile.avatarUrl
+                    ? {
+                        backgroundImage: `url(${JSON.stringify(data.profile.avatarUrl)})`,
+                      }
+                    : undefined
+                }
+                onClick={() => setProfileModalOpen(true)}
+                aria-label="Profili düzənlə"
+              >
+                {!data.profile.avatarUrl && initials(data.profile.fullName)}
+              </button>
             </div>
           </header>
 
@@ -812,41 +1002,105 @@ export function MinimaApp({
 
                   <aside className="analytics-column">
                     <h2>AI Analitika ✨</h2>
-                    <article className="analytics-card">
-                      <strong>
-                        Kitab oxuduğun günlərdə əhvalın {" "}
-                        <span>40% daha yüksək</span> olub 📈
-                      </strong>
-                      <div>
-                        {[38, 52, 46, 78, 88, 64, 100].map((height, index) => (
-                          <i
-                            key={height}
-                            style={{
-                              height: `${height}%`,
-                              backgroundColor:
-                                index === 3 || index === 4 || index === 6
-                                  ? "#dff0c2"
-                                  : "rgba(255,255,255,.28)",
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </article>
-                    <article className="timing-card">
-                      <span>
-                        <Clock size={21} weight="duotone" />
-                      </span>
-                      <p>
-                        Ən çox <strong>səhər 9–11 arası</strong> tapşırıq
-                        tamamlayırsan.
-                      </p>
-                    </article>
-                    <article className="progress-insight">
-                      <span>
-                        <TrendUp size={20} weight="duotone" />
-                      </span>
-                      <p>Kiçik addımların bu ay ardıcıllığını gücləndirib.</p>
-                    </article>
+                    {hasAnalyticsData ? (
+                      <>
+                        <article className="analytics-card">
+                          <strong>
+                            Bu həftə <span>{activeWeekDays}/7 gün</span> minimal
+                            tamamlamısan.
+                          </strong>
+                          <div aria-label={`${activeWeekDays} aktiv gün`}>
+                            {data.weeklyActivity.map((active, index) => (
+                              <i
+                                key={index}
+                                style={{
+                                  height: active ? "100%" : "22%",
+                                  backgroundColor: active
+                                    ? "#dff0c2"
+                                    : "rgba(255,255,255,.28)",
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </article>
+                        <article className="timing-card">
+                          <span>
+                            <Check size={21} weight="bold" />
+                          </span>
+                          <p>
+                            Ümumilikdə <strong>{data.stats.completedTotal} minimal</strong>{" "}
+                            tamamlamısan.
+                          </p>
+                        </article>
+                        <article className="progress-insight">
+                          <span>
+                            <TrendUp size={20} weight="duotone" />
+                          </span>
+                          <p>
+                            Bu ay ardıcıllığın <strong>{data.stats.monthlyConsistency}%</strong>,
+                            əhval qeydin isə {moodDaysTracked} gündür.
+                          </p>
+                        </article>
+                      </>
+                    ) : (
+                      <article className="analytics-empty">
+                        <span className="analytics-empty-icon">
+                          <Sparkle size={23} weight="fill" />
+                        </span>
+                        <strong>Şəxsi analiz üçün bir az məlumat lazımdır</strong>
+                        <p>
+                          Minimallarını tamamla və əhvalını qeyd et. İlk nəticələr
+                          avtomatik burada görünəcək.
+                        </p>
+                        <div className="analytics-requirements">
+                          <div
+                            className={
+                              data.stats.completedTotal >= analyticsTargets.completions
+                                ? "is-complete"
+                                : ""
+                            }
+                          >
+                            <span>
+                              <Check size={16} weight="bold" /> Minimal tamamla
+                            </span>
+                            <strong>
+                              {Math.min(
+                                data.stats.completedTotal,
+                                analyticsTargets.completions,
+                              )}
+                              /{analyticsTargets.completions}
+                            </strong>
+                          </div>
+                          <div
+                            className={
+                              moodDaysTracked >= analyticsTargets.moodDays
+                                ? "is-complete"
+                                : ""
+                            }
+                          >
+                            <span>
+                              <Clock size={16} weight="duotone" /> Əhvalını qeyd et
+                            </span>
+                            <strong>
+                              {Math.min(moodDaysTracked, analyticsTargets.moodDays)}/
+                              {analyticsTargets.moodDays} gün
+                            </strong>
+                          </div>
+                        </div>
+                        <div
+                          className="analytics-progress"
+                          aria-label={`Analitika üçün məlumat ${analyticsProgress}% tamamlanıb`}
+                        >
+                          <i style={{ width: `${analyticsProgress}%` }} />
+                        </div>
+                      </article>
+                    )}
+                    <button
+                      className="profile-settings-button"
+                      onClick={() => setProfileModalOpen(true)}
+                    >
+                      <PencilSimple size={17} /> Profili düzənlə
+                    </button>
                     <button className="logout-button" onClick={logout}>
                       <SignOut size={17} /> Çıxış et
                     </button>
@@ -880,6 +1134,15 @@ export function MinimaApp({
         onClose={() => setModalOpen(false)}
         onSave={saveHabit}
         onDelete={editingHabit ? deleteHabit : null}
+      />
+      <ProfileModal
+        open={profileModalOpen}
+        profile={data.profile}
+        onClose={() => setProfileModalOpen(false)}
+        onSaveIdentity={saveIdentity}
+        onChangeEmail={changeProfileEmail}
+        onChangePassword={changeProfilePassword}
+        onDeleteAccount={deleteProfileAccount}
       />
       <SuccessOverlay emoji={success.emoji} visible={success.visible} />
       {notice && <div className="toast-notice">{notice}</div>}

@@ -122,6 +122,7 @@ export async function getDashboardData(
       id: userId,
       fullName: profile?.full_name || profile?.email?.split("@")[0] || "Dost",
       email: profile?.email || "",
+      avatarUrl: profile?.avatar_url || null,
       streakCount: profile?.streak_count || 0,
     },
     habits: regularHabits,

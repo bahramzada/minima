@@ -2,6 +2,8 @@
 
 Minima gündəlik mikro-vərdişlər, əhval qeydləri və fərdiləşdirilmiş AI tapşırıqları üçün mobil-fokuslu Next.js tətbiqidir.
 
+Bu folder müstəqil `web` Git repository-sidir. React Native + Expo tətbiqi sibling `../mobile/` repository-sində hazırlanacaq. Web və mobile tərəfindən paylaşılacaq Supabase migrations və gələcək Edge Functions üçün canonical mənbə bu repository-dəki `supabase/` folder-idir. Workspace roadmap və iş qaydaları bir üst `minima/` folder-ində saxlanılır.
+
 ## Texnologiyalar
 
 - Next.js App Router, React, TypeScript
@@ -13,6 +15,7 @@ Minima gündəlik mikro-vərdişlər, əhval qeydləri və fərdiləşdirilmiş 
 ## Lokal işə salma
 
 ```bash
+cd web
 npm install
 cp .env.example .env.local
 npm run dev
@@ -66,4 +69,3 @@ npm run icons      # PWA ikonlarını yenidən yarat
 - `OPENROUTER_SITE_URL` dəyərini production domeninə dəyişin.
 - `ALLOW_DEMO_AI=false` saxlayın ki, anonim istifadəçilər OpenRouter xərcini yarada bilməsin.
 - HTTPS üzərində build deploy edin; service worker yalnız təhlükəsiz origin-də (və localhost-da) işləyir.
-

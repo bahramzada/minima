@@ -69,3 +69,7 @@ npm run icons      # PWA ikonlarını yenidən yarat
 - `OPENROUTER_SITE_URL` dəyərini production domeninə dəyişin.
 - `ALLOW_DEMO_AI=false` saxlayın ki, anonim istifadəçilər OpenRouter xərcini yarada bilməsin.
 - HTTPS üzərində build deploy edin; service worker yalnız təhlükəsiz origin-də (və localhost-da) işləyir.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

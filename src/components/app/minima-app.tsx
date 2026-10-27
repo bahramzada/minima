@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  ArrowUp,
   Check,
   Clock,
   House,
@@ -20,7 +19,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
 } from "react";
 
 import { Brand } from "@/components/brand";
@@ -33,23 +31,25 @@ import {
   type IdentityInput,
 } from "@/components/app/profile-modal";
 import { SuccessOverlay } from "@/components/app/success-overlay";
-import type {
-  AiTaskPayload,
-  AppMode,
-  DashboardData,
-  Habit,
-} from "@/components/app/types";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
-import { dateRange, toDateKey } from "@/lib/utils/date";
+import type { DashboardData, Habit } from "@/components/app/types";
+import {
+  changePassword as changeAccountPassword,
+  logout as signOut,
+} from "@/lib/api/client";
+import {
+  deleteAccount,
+  insertHabit,
+  patchHabit,
+  patchProfile,
+  removeAvatar,
+  removeHabit,
+  saveMoodLog,
+  setHabitCompletion,
+  uploadAvatar,
+} from "@/lib/api/dashboard";
+import { dateRange } from "@/lib/utils/date";
 
 type Screen = "home" | "ai" | "profile";
-
-type ChatMessage = {
-  id: string;
-  from: "ai" | "me";
-  text: string;
-  task?: AiTaskPayload;
-};
 
 const moodChoices = [
   { emoji: "😴", label: "Yorğun", level: 0 },
@@ -79,30 +79,7 @@ function initials(name: string) {
   ).toUpperCase();
 }
 
-function makeLocalHabit(input: HabitInput, isAiGenerated = false): Habit {
-  return {
-    id: crypto.randomUUID(),
-    title: input.title,
-    emoji: input.emoji,
-    subtitle: input.subtitle,
-    category: input.category,
-    targetMinutes: input.targetMinutes,
-    isAiGenerated,
-    isDailyTask: false,
-    completedToday: false,
-    createdAt: new Date().toISOString(),
-  };
-}
-
-export function MinimaApp({
-  initialData,
-  mode,
-  setupError,
-}: {
-  initialData: DashboardData;
-  mode: AppMode;
-  setupError?: string;
-}) {
+export function MinimaApp({ initialData }: { initialData: DashboardData }) {
   const router = useRouter();
   const [data, setData] = useState(initialData);
   const [screen, setScreen] = useState<Screen>("home");
@@ -112,96 +89,13 @@ export function MinimaApp({
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [modalBusy, setModalBusy] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
-  const [chat, setChat] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      from: "ai",
-      text: `Salam ${initialData.profile.fullName.split(" ")[0]}! 🌿 Bu gün özünü necə hiss edirsən? Sənə uyğun 2 dəqiqəlik tapşırıq seçim.`,
-    },
-  ]);
-  const [chatInput, setChatInput] = useState("");
-  const [typing, setTyping] = useState(false);
-  const [lastPrompt, setLastPrompt] = useState<{ mood?: string; message?: string }>({
-    mood: "Yorğun",
-  });
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dailyRequested = useRef(false);
-
-  const realBackend = mode === "supabase";
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (mode === "demo") {
-        try {
-          const stored = localStorage.getItem("minima-demo-state");
-          const storedProfile = localStorage.getItem("minima-demo-profile");
-          if (stored) setData(JSON.parse(stored) as DashboardData);
-          if (storedProfile) {
-            const profile = JSON.parse(storedProfile) as {
-              fullName?: string;
-              email?: string;
-              avatarUrl?: string | null;
-            };
-            setData((current) => ({
-              ...current,
-              profile: {
-                ...current.profile,
-                fullName: profile.fullName || current.profile.fullName,
-                email: profile.email || current.profile.email,
-                avatarUrl: profile.avatarUrl ?? current.profile.avatarUrl,
-              },
-            }));
-          }
-        } catch {
-          localStorage.removeItem("minima-demo-state");
-        }
-      }
-      setHydrated(true);
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode === "demo" && hydrated) {
-      localStorage.setItem("minima-demo-state", JSON.stringify(data));
-    }
-  }, [data, hydrated, mode]);
+  const today = data.today;
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [screen]);
-
-  useEffect(() => {
-    if (data.dailyTask || dailyRequested.current) return;
-    dailyRequested.current = true;
-
-    void (async () => {
-      try {
-        const response = await fetch("/api/ai/daily", { method: "POST" });
-        const json = await response.json();
-        if (!response.ok) throw new Error(json.error || "AI tapşırıq yaradılmadı.");
-
-        const dailyTask: Habit = json.habit || {
-          id: crypto.randomUUID(),
-          title: json.task.task,
-          emoji: json.task.emoji,
-          subtitle: `AI · ${json.task.minutes} dəqiqə`,
-          category: json.task.category,
-          targetMinutes: json.task.minutes,
-          isAiGenerated: true,
-          isDailyTask: true,
-          completedToday: false,
-          createdAt: new Date().toISOString(),
-        };
-        setData((current) => ({ ...current, dailyTask }));
-      } catch (error) {
-        showNotice(error instanceof Error ? error.message : "AI tapşırıq yaradılmadı.");
-      }
-    })();
-  }, [data.dailyTask]);
 
   function showNotice(message: string) {
     setNotice(message);
@@ -229,10 +123,6 @@ export function MinimaApp({
           ? { ...item, completedToday: nextCompleted }
           : item,
       ),
-      dailyTask:
-        current.dailyTask?.id === habit.id
-          ? { ...current.dailyTask, completedToday: nextCompleted }
-          : current.dailyTask,
       stats: {
         ...current.stats,
         completedTotal: Math.max(
@@ -244,17 +134,11 @@ export function MinimaApp({
 
     if (nextCompleted) showSuccess(habit.emoji);
 
-    if (!realBackend) return;
-
     try {
-      const response = await fetch(`/api/habits/${habit.id}/toggle`, {
-        method: "POST",
-      });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error || "Dəyişiklik saxlanmadı.");
+      const streakCount = await setHabitCompletion(habit.id, today, nextCompleted);
       setData((current) => ({
         ...current,
-        profile: { ...current.profile, streakCount: json.streakCount },
+        profile: { ...current.profile, streakCount },
       }));
     } catch (error) {
       setData(previousData);
@@ -276,15 +160,7 @@ export function MinimaApp({
     setModalBusy(true);
     try {
       if (editingHabit) {
-        if (realBackend) {
-          const response = await fetch(`/api/habits/${editingHabit.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(input),
-          });
-          const json = await response.json();
-          if (!response.ok) throw new Error(json.error || "Minimal saxlanmadı.");
-        }
+        await patchHabit(editingHabit.id, input);
         setData((current) => ({
           ...current,
           habits: current.habits.map((habit) =>
@@ -293,17 +169,7 @@ export function MinimaApp({
         }));
         showNotice("Minimal yeniləndi.");
       } else {
-        let habit = makeLocalHabit(input);
-        if (realBackend) {
-          const response = await fetch("/api/habits", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(input),
-          });
-          const json = await response.json();
-          if (!response.ok) throw new Error(json.error || "Minimal yaradılmadı.");
-          habit = json.habit;
-        }
+        const habit = await insertHabit(input);
         setData((current) => ({
           ...current,
           habits: [...current.habits, habit],
@@ -326,13 +192,7 @@ export function MinimaApp({
     if (!editingHabit) return;
     setModalBusy(true);
     try {
-      if (realBackend) {
-        const response = await fetch(`/api/habits/${editingHabit.id}`, {
-          method: "DELETE",
-        });
-        const json = await response.json();
-        if (!response.ok) throw new Error(json.error || "Minimal silinmədi.");
-      }
+      await removeHabit(editingHabit.id);
       setData((current) => ({
         ...current,
         habits: current.habits.filter((habit) => habit.id !== editingHabit.id),
@@ -351,7 +211,6 @@ export function MinimaApp({
   }
 
   async function saveMood(emoji: string, level: number) {
-    const today = toDateKey();
     const previous = data.moodLogs;
     setData((current) => ({
       ...current,
@@ -362,236 +221,47 @@ export function MinimaApp({
     }));
     showNotice(`Bugünkü əhvalın ${emoji} kimi yadda saxlandı.`);
 
-    if (!realBackend) return;
     try {
-      const response = await fetch("/api/moods", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emoji, level }),
-      });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error || "Əhval saxlanmadı.");
+      await saveMoodLog(today, emoji, level);
     } catch (error) {
       setData((current) => ({ ...current, moodLogs: previous }));
       showNotice(error instanceof Error ? error.message : "Əhval saxlanmadı.");
     }
   }
 
-  async function requestSuggestion(prompt: { mood?: string; message?: string }) {
-    if (typing) return;
-    const label = prompt.mood || prompt.message || "Bu gün üçün tapşırıq";
-    setLastPrompt(prompt);
-    setChat((current) => [
-      ...current,
-      { id: crypto.randomUUID(), from: "me", text: label },
-    ]);
-    setTyping(true);
-
-    try {
-      const response = await fetch("/api/ai/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prompt),
-      });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error || "AI cavab vermədi.");
-
-      setChat((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          from: "ai",
-          text: json.task.task,
-          task: json.task,
-        },
-      ]);
-
-      const createdHabit: Habit =
-        json.habit ||
-        makeLocalHabit(
-          {
-            title: json.task.task,
-            emoji: json.task.emoji,
-            subtitle: `AI · ${json.task.minutes} dəqiqə`,
-            category: json.task.category,
-            targetMinutes: json.task.minutes,
-          },
-          true,
-        );
-
-      setData((current) =>
-        current.habits.some((habit) => habit.id === createdHabit.id)
-          ? current
-          : {
-              ...current,
-              habits: [...current.habits, createdHabit],
-              stats: {
-                ...current.stats,
-                activeHabits: current.stats.activeHabits + 1,
-              },
-            },
-      );
-    } catch (error) {
-      showNotice(error instanceof Error ? error.message : "AI cavab vermədi.");
-    } finally {
-      setTyping(false);
-    }
-  }
-
-  function submitChat(event: FormEvent) {
-    event.preventDefault();
-    const value = chatInput.trim();
-    if (!value) return;
-    setChatInput("");
-    void requestSuggestion({ message: value });
-  }
-
   async function logout() {
-    if (realBackend) {
-      await createBrowserSupabaseClient()?.auth.signOut();
-    } else {
-      localStorage.removeItem("minima-demo-profile");
-    }
+    await signOut();
     router.push("/");
-    router.refresh();
   }
 
   async function saveIdentity(input: IdentityInput) {
+    await patchProfile({ fullName: input.fullName });
+
     let avatarUrl = data.profile.avatarUrl;
-
-    if (realBackend) {
-      const supabase = createBrowserSupabaseClient();
-      if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
-
-      const avatarPath = `${data.profile.id}/avatar`;
-      if (input.removeAvatar) {
-        const { error } = await supabase.storage
-          .from("avatars")
-          .remove([avatarPath]);
-        if (error) throw error;
-        avatarUrl = null;
-      } else if (input.avatarFile) {
-        const { error } = await supabase.storage
-          .from("avatars")
-          .upload(avatarPath, input.avatarFile, {
-            cacheControl: "3600",
-            contentType: input.avatarFile.type,
-            upsert: true,
-          });
-        if (error) throw error;
-
-        const publicUrl = supabase.storage
-          .from("avatars")
-          .getPublicUrl(avatarPath).data.publicUrl;
-        avatarUrl = `${publicUrl}?v=${Date.now()}`;
-      }
-
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          full_name: input.fullName,
-          avatar_url: avatarUrl,
-        })
-        .eq("id", data.profile.id);
-      if (error) throw error;
-    } else {
-      if (input.removeAvatar) {
-        avatarUrl = null;
-      } else if (input.avatarFile) {
-        avatarUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(new Error("Şəkil oxunmadı."));
-          reader.readAsDataURL(input.avatarFile!);
-        });
-      }
+    if (input.removeAvatar) {
+      await removeAvatar();
+      avatarUrl = null;
+    } else if (input.avatarFile) {
+      avatarUrl = await uploadAvatar(input.avatarFile);
     }
 
-    const nextProfile = {
-      ...data.profile,
-      fullName: input.fullName,
-      avatarUrl,
-    };
-    setData((current) => ({ ...current, profile: nextProfile }));
-
-    if (mode === "demo") {
-      localStorage.setItem(
-        "minima-demo-profile",
-        JSON.stringify({
-          fullName: nextProfile.fullName,
-          email: nextProfile.email,
-          avatarUrl: nextProfile.avatarUrl,
-        }),
-      );
-    }
+    setData((current) => ({
+      ...current,
+      profile: { ...current.profile, fullName: input.fullName, avatarUrl },
+    }));
   }
 
-  async function changeProfileEmail(email: string) {
-    if (!realBackend) {
-      const nextProfile = { ...data.profile, email };
-      setData((current) => ({ ...current, profile: nextProfile }));
-      localStorage.setItem(
-        "minima-demo-profile",
-        JSON.stringify({
-          fullName: nextProfile.fullName,
-          email: nextProfile.email,
-          avatarUrl: nextProfile.avatarUrl,
-        }),
-      );
-      return;
-    }
-
-    const supabase = createBrowserSupabaseClient();
-    if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
-    const { data: authData, error } = await supabase.auth.updateUser({ email });
-    if (error) throw error;
-
-    if (authData.user.email === email) {
-      setData((current) => ({
-        ...current,
-        profile: { ...current.profile, email },
-      }));
-    }
-  }
-
-  async function changeProfilePassword(password: string) {
-    if (!realBackend) return;
-    const supabase = createBrowserSupabaseClient();
-    if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) throw error;
-  }
-
-  async function deleteProfileAccount() {
-    if (!realBackend) {
-      localStorage.removeItem("minima-demo-state");
-      localStorage.removeItem("minima-demo-profile");
-      router.push("/");
-      router.refresh();
-      return;
-    }
-
-    const supabase = createBrowserSupabaseClient();
-    if (!supabase) throw new Error("Supabase bağlantısı tapılmadı.");
-
-    const { error: avatarError } = await supabase.storage
-      .from("avatars")
-      .remove([`${data.profile.id}/avatar`]);
-    if (avatarError) throw avatarError;
-
-    const { error } = await supabase.rpc("delete_own_account");
-    if (error) throw error;
-
-    await supabase.auth.signOut({ scope: "local" });
+  async function deleteProfileAccount(password: string) {
+    await deleteAccount(password);
+    await signOut();
     router.push("/");
-    router.refresh();
   }
 
   const regularDone = data.habits.filter((habit) => habit.completedToday).length;
   const allDone = data.habits.length > 0 && regularDone === data.habits.length;
   const firstName = data.profile.fullName.split(" ")[0] || "Dost";
   const activeWeekDays = data.weeklyActivity.filter(Boolean).length;
-  const todayMood = data.moodLogs.find((mood) => mood.date === toDateKey());
+  const todayMood = data.moodLogs.find((mood) => mood.date === today);
   const moodDaysTracked = new Set(data.moodLogs.map((mood) => mood.date)).size;
   const hasAnalyticsData =
     data.stats.completedTotal >= analyticsTargets.completions &&
@@ -608,7 +278,7 @@ export function MinimaApp({
     () => new Map(data.moodLogs.map((mood) => [mood.date, mood])),
     [data.moodLogs],
   );
-  const moodDates = useMemo(() => dateRange(toDateKey(), 119), []);
+  const moodDates = useMemo(() => dateRange(today, 119), [today]);
 
   const navItems = [
     { key: "home" as const, label: "Əsas", Icon: House },
@@ -663,7 +333,7 @@ export function MinimaApp({
               </span>
               <div>
                 <strong>{data.profile.fullName}</strong>
-                <small>{mode === "demo" ? "Demo plan" : "Pulsuz plan"}</small>
+                <small>Pulsuz plan</small>
               </div>
             </button>
             <button
@@ -680,14 +350,6 @@ export function MinimaApp({
 
       <section className="app-main">
         <div className="app-content">
-          {setupError && (
-            <div className="setup-banner">
-              Supabase qoşulub, amma sxem hələ hazır deyil. Demo məlumatları
-              göstərilir. SQL migration-u tətbiq etdikdən sonra real məlumatlar
-              avtomatik aktivləşəcək.
-            </div>
-          )}
-
           <header className="app-header">
             <div>
               <h1>Salam, {firstName} 🌿</h1>
@@ -723,26 +385,6 @@ export function MinimaApp({
           >
             {screen === "home" && (
               <section className="home-screen">
-                {!allDone && data.dailyTask && (
-                  <article
-                    className={`daily-card ${data.dailyTask.completedToday ? "is-complete" : ""}`}
-                  >
-                    <div>
-                      <small>
-                        <Sparkle size={13} weight="fill" /> Günün Tapşırığı · AI
-                      </small>
-                      <h2>{data.dailyTask.title}</h2>
-                      <p>
-                        AI bugünkü ritminə uyğun seçdi — cəmi {data.dailyTask.targetMinutes}{" "}
-                        dəqiqə, alət lazım deyil.
-                      </p>
-                    </div>
-                    <button onClick={() => toggleHabit(data.dailyTask!)}>
-                      {data.dailyTask.completedToday ? "Tamamlandı ✓" : "Başla →"}
-                    </button>
-                  </article>
-                )}
-
                 {allDone ? (
                   <div className="all-done-state">
                     <span>🎉</span>
@@ -867,62 +509,13 @@ export function MinimaApp({
                       <p>Əhvalını de — sənə 2 dəqiqəlik reaksiya tapım</p>
                     </div>
                   </header>
-                  <div className="chat-messages" aria-live="polite">
-                    {chat.map((message) =>
-                      message.task ? (
-                        <article className="ai-task-message" key={message.id}>
-                          <small>✦ 2 dəqiqəlik tapşırıq</small>
-                          <strong>{message.task.task}</strong>
-                          <div>
-                            <button onClick={() => setScreen("home")}>Başla →</button>
-                            <button onClick={() => requestSuggestion(lastPrompt)}>
-                              Başqası
-                            </button>
-                          </div>
-                        </article>
-                      ) : (
-                        <div
-                          className={`chat-bubble ${message.from === "me" ? "is-me" : ""}`}
-                          key={message.id}
-                        >
-                          {message.text}
-                        </div>
-                      ),
-                    )}
-                    {typing && (
-                      <div className="typing-state">
-                        <span /> <span /> <span /> <small>AI düşünür…</small>
-                      </div>
-                    )}
-                  </div>
-                  <div className="chat-composer">
-                    <div className="mood-chips">
-                      {moodChoices.map((mood) => (
-                        <button
-                          key={mood.label}
-                          onClick={() =>
-                            requestSuggestion({
-                              mood: `${mood.emoji} ${mood.label}`,
-                            })
-                          }
-                          disabled={typing}
-                        >
-                          {mood.emoji} {mood.label}
-                        </button>
-                      ))}
-                    </div>
-                    <form onSubmit={submitChat}>
-                      <input
-                        value={chatInput}
-                        onChange={(event) => setChatInput(event.target.value)}
-                        placeholder="Əhvalını yaz…"
-                        aria-label="Əhvalını yaz"
-                        maxLength={240}
-                      />
-                      <button type="submit" disabled={typing || !chatInput.trim()}>
-                        <ArrowUp size={19} weight="bold" />
-                      </button>
-                    </form>
+                  <div className="empty-state">
+                    <span>✨</span>
+                    <h2>Tezliklə qayıdır</h2>
+                    <p>
+                      AI köməkçi yeni serverə köçürülür. Hələlik əhvalını qeyd et,
+                      vərdişlərini tamamla — seriyan işləyir.
+                    </p>
                   </div>
                 </div>
               </section>
@@ -980,7 +573,7 @@ export function MinimaApp({
                         return (
                           <span
                             key={date}
-                            className={date === toDateKey() ? "is-today" : ""}
+                            className={date === today ? "is-today" : ""}
                             style={{
                               backgroundColor: mood
                                 ? moodColors[mood.level]
@@ -1140,8 +733,7 @@ export function MinimaApp({
         profile={data.profile}
         onClose={() => setProfileModalOpen(false)}
         onSaveIdentity={saveIdentity}
-        onChangeEmail={changeProfileEmail}
-        onChangePassword={changeProfilePassword}
+        onChangePassword={changeAccountPassword}
         onDeleteAccount={deleteProfileAccount}
       />
       <SuccessOverlay emoji={success.emoji} visible={success.visible} />

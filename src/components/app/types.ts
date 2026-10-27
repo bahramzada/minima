@@ -1,5 +1,3 @@
-export type AppMode = "demo" | "supabase" | "setup";
-
 export type Habit = {
   id: string;
   title: string;
@@ -7,10 +5,7 @@ export type Habit = {
   subtitle: string;
   category: string;
   targetMinutes: number;
-  isAiGenerated: boolean;
-  isDailyTask: boolean;
   completedToday: boolean;
-  createdAt: string;
 };
 
 export type MoodLog = {
@@ -26,21 +21,17 @@ export type DashboardData = {
     email: string;
     avatarUrl: string | null;
     streakCount: number;
+    locale: string;
+    timezone: string;
   };
   habits: Habit[];
-  dailyTask: Habit | null;
   moodLogs: MoodLog[];
+  today: string;
+  /** Seven entries ending today: 1 when at least one habit was completed. */
   weeklyActivity: number[];
   stats: {
     completedTotal: number;
     monthlyConsistency: number;
     activeHabits: number;
   };
-};
-
-export type AiTaskPayload = {
-  task: string;
-  emoji: string;
-  minutes: number;
-  category: string;
 };

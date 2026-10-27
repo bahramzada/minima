@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { AuthForm } from "@/components/auth/auth-form";
 
 export const metadata: Metadata = { title: "Daxil ol" };
 
 export default function LoginPage() {
-  return <AuthForm mode="login" />;
+  return (
+    <Suspense>
+      <AuthForm mode="login" />
+    </Suspense>
+  );
 }

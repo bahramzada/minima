@@ -25,7 +25,7 @@ export type IdentityInput = {
   removeAvatar: boolean;
 };
 
-type BusyAction = "identity" | "email" | "password" | "delete" | null;
+type BusyAction = "identity" | "password" | "delete" | null;
 
 function initials(name: string) {
   return (
@@ -43,7 +43,6 @@ export function ProfileModal({
   profile,
   onClose,
   onSaveIdentity,
-  onChangeEmail,
   onChangePassword,
   onDeleteAccount,
 }: {
@@ -51,9 +50,8 @@ export function ProfileModal({
   profile: DashboardData["profile"];
   onClose: () => void;
   onSaveIdentity: (input: IdentityInput) => Promise<void>;
-  onChangeEmail: (email: string) => Promise<void>;
-  onChangePassword: (password: string) => Promise<void>;
-  onDeleteAccount: () => Promise<void>;
+  onChangePassword: (currentPassword: string, password: string) => Promise<void>;
+  onDeleteAccount: (password: string) => Promise<void>;
 }) {
   return (
     <AnimatePresence>
@@ -63,7 +61,6 @@ export function ProfileModal({
           profile={profile}
           onClose={onClose}
           onSaveIdentity={onSaveIdentity}
-          onChangeEmail={onChangeEmail}
           onChangePassword={onChangePassword}
           onDeleteAccount={onDeleteAccount}
         />
@@ -76,19 +73,17 @@ function ProfileModalPanel({
   profile,
   onClose,
   onSaveIdentity,
-  onChangeEmail,
   onChangePassword,
   onDeleteAccount,
 }: {
   profile: DashboardData["profile"];
   onClose: () => void;
   onSaveIdentity: (input: IdentityInput) => Promise<void>;
-  onChangeEmail: (email: string) => Promise<void>;
-  onChangePassword: (password: string) => Promise<void>;
-  onDeleteAccount: () => Promise<void>;
+  onChangePassword: (currentPassword: string, password: string) => Promise<void>;
+  onDeleteAccount: (password: string) => Promise<void>;
 }) {
   const [fullName, setFullName] = useState(profile.fullName);
-  const [email, setEmail] = useState(profile.email);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -99,6 +94,7 @@ function ProfileModalPanel({
   const [isError, setIsError] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
 
   useEffect(() => {
     return () => {
@@ -164,35 +160,12 @@ function ProfileModalPanel({
     }
   }
 
-  async function changeEmail(event: FormEvent) {
-    event.preventDefault();
-    const nextEmail = email.trim().toLowerCase();
-    if (!/.+@.+\..+/.test(nextEmail)) {
-      setFeedback("Düzgün e-poçt ünvanı yaz.", true);
-      return;
-    }
-    if (nextEmail === profile.email.toLowerCase()) {
-      setFeedback("Bu e-poçt artıq hesabında istifadə olunur.", true);
-      return;
-    }
-
-    setBusy("email");
-    setFeedback("");
-    try {
-      await onChangeEmail(nextEmail);
-      setFeedback("Təsdiq e-poçtu göndərildi. Lazım gələrsə hər iki e-poçt ünvanını yoxla.");
-    } catch (error) {
-      setFeedback(
-        error instanceof Error ? error.message : "E-poçt dəyişdirilmədi.",
-        true,
-      );
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function changePassword(event: FormEvent) {
     event.preventDefault();
+    if (!currentPassword) {
+      setFeedback("Cari şifrəni yaz.", true);
+      return;
+    }
     if (password.length < 8) {
       setFeedback("Yeni şifrə ən azı 8 simvol olmalıdır.", true);
       return;
@@ -205,7 +178,8 @@ function ProfileModalPanel({
     setBusy("password");
     setFeedback("");
     try {
-      await onChangePassword(password);
+      await onChangePassword(currentPassword, password);
+      setCurrentPassword("");
       setPassword("");
       setPasswordConfirm("");
       setFeedback("Şifrən yeniləndi.");
@@ -220,11 +194,11 @@ function ProfileModalPanel({
   }
 
   async function deleteAccount() {
-    if (deleteConfirm !== "SİL") return;
+    if (deleteConfirm !== "SİL" || !deletePassword) return;
     setBusy("delete");
     setFeedback("");
     try {
-      await onDeleteAccount();
+      await onDeleteAccount(deletePassword);
     } catch (error) {
       setFeedback(
         error instanceof Error ? error.message : "Hesab silinmədi.",
@@ -326,29 +300,19 @@ function ProfileModalPanel({
         </form>
 
         <div className="profile-settings-grid">
-          <form className="profile-section" onSubmit={changeEmail}>
+          <div className="profile-section">
             <div className="profile-section-icon is-email">
               <EnvelopeSimple size={20} weight="duotone" />
             </div>
             <div className="profile-section-heading">
               <span>E-poçt</span>
-              <small>Dəyişiklik təsdiq tələb edir</small>
+              <small>Hələlik dəyişdirilə bilmir</small>
             </div>
             <label className="profile-field">
-              <span>Yeni e-poçt</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                autoComplete="email"
-                required
-                disabled={Boolean(busy)}
-              />
+              <span>Hesab e-poçtu</span>
+              <input type="email" value={profile.email} readOnly />
             </label>
-            <button className="profile-secondary-button" type="submit" disabled={Boolean(busy)}>
-              {busy === "email" ? "Göndərilir…" : "Təsdiq linki göndər"}
-            </button>
-          </form>
+          </div>
 
           <form className="profile-section" onSubmit={changePassword}>
             <div className="profile-section-icon is-password">
@@ -358,6 +322,17 @@ function ProfileModalPanel({
               <span>Şifrə</span>
               <small>Ən azı 8 simvol</small>
             </div>
+            <label className="profile-field">
+              <span>Cari şifrə</span>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                autoComplete="current-password"
+                placeholder="••••••••"
+                disabled={Boolean(busy)}
+              />
+            </label>
             <label className="profile-field">
               <span>Yeni şifrə</span>
               <input
@@ -399,6 +374,16 @@ function ProfileModalPanel({
           {deleteOpen ? (
             <div className="profile-delete-confirm">
               <label className="profile-field">
+                <span>Cari şifrən</span>
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(event) => setDeletePassword(event.target.value)}
+                  autoComplete="current-password"
+                  disabled={Boolean(busy)}
+                />
+              </label>
+              <label className="profile-field">
                 <span>Təsdiq üçün SİL yaz</span>
                 <input
                   value={deleteConfirm}
@@ -415,7 +400,7 @@ function ProfileModalPanel({
                   type="button"
                   className="confirm-delete-button"
                   onClick={deleteAccount}
-                  disabled={deleteConfirm !== "SİL" || Boolean(busy)}
+                  disabled={deleteConfirm !== "SİL" || !deletePassword || Boolean(busy)}
                 >
                   {busy === "delete" ? "Silinir…" : "Hesabı birdəfəlik sil"}
                 </button>

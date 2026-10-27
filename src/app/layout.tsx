@@ -22,7 +22,7 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.OPENROUTER_SITE_URL || "http://localhost:3000"),
+  metadataBase: new URL(process.env.SITE_URL || "http://localhost:3000"),
   applicationName: "Minima",
   title: {
     default: "Minima — Kiçik addımlar, böyük nəticələr",

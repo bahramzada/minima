@@ -2,23 +2,41 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { Brand } from "@/components/brand";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import {
+  ApiError,
+  forgotPassword,
+  login,
+  resendVerification,
+  signUp,
+} from "@/lib/api/client";
 
 type Mode = "login" | "signup";
 
+const notices: Record<string, { text: string; error?: boolean }> = {
+  verified: { text: "E-poçtun təsdiqləndi. İndi daxil ola bilərsən." },
+  password_reset: { text: "Şifrən yeniləndi. Yeni şifrənlə daxil ol." },
+  invalid_link: { text: "Link etibarsızdır və ya vaxtı keçib.", error: true },
+};
+
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
+  const notice = notices[useSearchParams().get("notice") ?? ""];
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [isError, setIsError] = useState(false);
+  const [message, setMessage] = useState(notice?.text ?? "");
+  const [isError, setIsError] = useState(Boolean(notice?.error));
+  const [canResend, setCanResend] = useState(false);
 
   const isSignup = mode === "signup";
+
+  function errorText(error: unknown) {
+    return error instanceof Error ? error.message : "Xəta baş verdi.";
+  }
 
   function setFeedback(text: string, error = false) {
     setMessage(text);
@@ -28,6 +46,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback("");
+    setCanResend(false);
 
     if (isSignup && name.trim().length < 2) {
       setFeedback("Adını ən azı 2 simvolla yaz.", true);
@@ -37,63 +56,35 @@ export function AuthForm({ mode }: { mode: Mode }) {
       setFeedback("Düzgün e-poçt ünvanı yaz.", true);
       return;
     }
-    if (password.length < 6) {
-      setFeedback("Şifrə ən azı 6 simvol olmalıdır.", true);
+    if (password.length < 8) {
+      setFeedback("Şifrə ən azı 8 simvol olmalıdır.", true);
       return;
     }
 
     setLoading(true);
-    const supabase = createBrowserSupabaseClient();
-
-    if (!supabase) {
-      localStorage.setItem(
-        "minima-demo-profile",
-        JSON.stringify({ fullName: name.trim() || "Aysel Məmmədova", email }),
-      );
+    try {
+      if (isSignup) {
+        await signUp({ email: email.trim(), password, fullName: name.trim() });
+        setFeedback("E-poçtunu yoxla və hesabını təsdiqləyən linkə toxun.");
+        return;
+      }
+      await login(email.trim(), password);
       router.push("/app");
-      return;
+    } catch (error) {
+      setFeedback(errorText(error), true);
+      setCanResend(error instanceof ApiError && error.code === "email_not_verified");
+    } finally {
+      setLoading(false);
     }
-
-    const result = isSignup
-      ? await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { full_name: name.trim() } },
-        })
-      : await supabase.auth.signInWithPassword({ email, password });
-
-    setLoading(false);
-    if (result.error) {
-      setFeedback(result.error.message, true);
-      return;
-    }
-
-    if (isSignup && !result.data.session) {
-      setFeedback("E-poçtunu yoxla və hesabını təsdiqlə.");
-      return;
-    }
-
-    router.push("/app");
-    router.refresh();
   }
 
-  async function continueWithGoogle() {
-    const supabase = createBrowserSupabaseClient();
-    if (!supabase) {
-      router.push("/app");
-      return;
-    }
-
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=/app`,
-      },
-    });
-    if (error) {
-      setLoading(false);
-      setFeedback(error.message, true);
+  async function resend() {
+    try {
+      await resendVerification(email.trim());
+      setFeedback("Təsdiq linki yenidən göndərildi.");
+      setCanResend(false);
+    } catch (error) {
+      setFeedback(errorText(error), true);
     }
   }
 
@@ -102,18 +93,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
       setFeedback("Əvvəlcə e-poçt ünvanını yaz.", true);
       return;
     }
-    const supabase = createBrowserSupabaseClient();
-    if (!supabase) {
-      setFeedback("Demo rejimində şifrə sıfırlama tələb olunmur.");
-      return;
+    try {
+      await forgotPassword(email.trim());
+      setFeedback("Hesab varsa, şifrə yeniləmə linki e-poçtuna göndərildi.");
+    } catch (error) {
+      setFeedback(errorText(error), true);
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`,
-    });
-    setFeedback(
-      error ? error.message : "Şifrə yeniləmə linki e-poçtuna göndərildi.",
-      Boolean(error),
-    );
   }
 
   return (
@@ -133,10 +118,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
           <button
             type="button"
             className="google-button"
-            onClick={continueWithGoogle}
-            disabled={loading}
+            disabled
+            title="Tezliklə"
           >
-            <span>G</span> Google ilə davam et
+            <span>G</span> Google ilə davam et (tezliklə)
           </button>
 
           <div className="auth-separator">
@@ -171,7 +156,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="ən azı 6 simvol"
+                placeholder="ən azı 8 simvol"
                 autoComplete={isSignup ? "new-password" : "current-password"}
               />
             </label>
@@ -189,6 +174,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
             {message && (
               <div className={`auth-message ${isError ? "is-error" : ""}`}>
                 {message}
+                {canResend && (
+                  <>
+                    {" "}
+                    <button className="forgot-button" type="button" onClick={resend}>
+                      Linki yenidən göndər
+                    </button>
+                  </>
+                )}
               </div>
             )}
 

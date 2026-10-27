@@ -2,54 +2,39 @@
 
 Minima gündəlik mikro-vərdişlər, əhval qeydləri və fərdiləşdirilmiş AI tapşırıqları üçün mobil-fokuslu Next.js tətbiqidir.
 
-Bu folder müstəqil `web` Git repository-sidir. React Native + Expo tətbiqi sibling `../mobile/` repository-sində hazırlanacaq. Web və mobile tərəfindən paylaşılacaq Supabase migrations və gələcək Edge Functions üçün canonical mənbə bu repository-dəki `supabase/` folder-idir. Workspace roadmap və iş qaydaları bir üst `minima/` folder-ində saxlanılır.
+Bu folder müstəqil `web` Git repository-sidir (`bahramzada/minima`). React Native + Expo tətbiqi sibling `../mobile/` repository-sindədir. Backend Minima API-dir (`../api/`, `https://minima.ltehub.top/v1`); `supabase/` folder-i yalnız köhnə Supabase migration-larının tarixi istinadıdır. Workspace roadmap və iş qaydaları bir üst `minima/` folder-ində saxlanılır.
 
 ## Texnologiyalar
 
 - Next.js App Router, React, TypeScript
 - Tailwind CSS və Framer Motion
-- Supabase Auth + PostgreSQL + Row Level Security
-- OpenRouter server-side AI inteqrasiyası
+- Minima API (Hono + PostgreSQL), eyni origin üzərində `/v1/*`
 - `@ducanh2912/next-pwa` ilə install edilə bilən PWA
 
+## Sessiya modeli
+
+- Brauzer API-yə birbaşa `/v1/...` ilə müraciət edir; access token (15 dəq) yalnız yaddaşdadır.
+- Refresh token JavaScript-ə görünmür: `/api/session/{login,refresh,logout,change-password}` route handler-ləri onu `httpOnly`, `SameSite=Lax` cookie-də saxlayır və API-yə `API_INTERNAL_URL` ilə müraciət edir (ziyarətçinin IP-sini `cf-connecting-ip` ilə ötürür, çünki API sorğu limitini IP ilə hesablayır).
+- Refresh tabs arası `navigator.locks` ilə növbələnir ki, rotasiya olunmuş cookie təkrar istifadə edilməsin.
+- E-poçt linkləri (`client=web`) API üzərindən `/auth/callback`-ə yönləndirilir (təsdiq → `/login?notice=verified`, şifrə sıfırlama → yeni şifrə formu).
+- Service worker `/v1/*` cavablarını heç vaxt keşləmir (`NetworkOnly`).
+
 ## Lokal işə salma
+
+API-ni ayrıca işə salın (`../api/scripts/dev-db.sh`, sonra `WEB_BASE_URL=http://localhost:3000 npm run dev` `api/` daxilində).
 
 ```bash
 cd web
 npm install
-cp .env.example .env.local
+cp .env.example .env.local   # API_INTERNAL_URL=http://localhost:8080
 npm run dev
 ```
 
-Tətbiq default olaraq `http://localhost:3000` ünvanında açılır. Supabase dəyişənləri boş olduqda təhlükəsiz lokal demo rejimi işləyir; demo məlumatları brauzerin `localStorage` yaddaşında saxlanılır.
+Development serverində `/v1/*` sorğuları `next.config.mjs`-dəki rewrite ilə API-yə yönləndirilir; production-da bunu Caddy edir.
 
-## Supabase quraşdırması
+## Container
 
-1. Supabase-də yeni project yaradın.
-2. [`supabase/migrations/202607190001_initial_schema.sql`](./supabase/migrations/202607190001_initial_schema.sql) faylını SQL Editor-da icra edin və ya Supabase CLI ilə migration tətbiq edin.
-3. Project URL və publishable key-i `.env.local` faylına əlavə edin.
-4. Authentication bölməsində Email provider-i aktiv saxlayın.
-5. Google provider-i aktivləşdirin və Google OAuth credentials əlavə edin.
-6. Supabase URL Configuration-da aşağıdakı redirect URL-ləri əlavə edin:
-
-```text
-http://localhost:3000/auth/callback
-https://SIZIN-DOMENINIZ/auth/callback
-```
-
-Migration profil yaradılmasını, starter vərdişləri, streak hesablanmasını, unique gündəlik logları və bütün cədvəllər üçün istifadəçi-səviyyəli RLS qaydalarını qurur.
-
-## OpenRouter quraşdırması
-
-`.env.local` daxilində yalnız serverdə istifadə olunan açarı təyin edin:
-
-```env
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=google/gemma-3-4b-it
-OPENROUTER_SITE_URL=http://localhost:3000
-```
-
-AI açarı frontend bundle-a ötürülmür. Bütün sorğular Next.js Route Handlers vasitəsilə göndərilir. OpenRouter əlçatan olmadıqda istifadəçi axınının qırılmaması üçün lokal, əhvala uyğun fallback tapşırıqlar qaytarılır.
+`Dockerfile` (Next.js standalone, istifadəçi `node`, port 3000, health `GET /api/health`). Runtime dəyişənləri: `API_INTERNAL_URL` (məs. `http://minima-api:8080`), istəyə görə `SITE_URL`. Secret lazım deyil; build arqumenti yoxdur.
 
 ## Əsas komandalar
 
@@ -64,11 +49,10 @@ npm run icons      # PWA ikonlarını yenidən yarat
 
 ## Production checklist
 
-- `.env.local` dəyişənlərini hosting platformasında secret kimi əlavə edin.
-- Supabase redirect URL-lərində production domenini qeyd edin.
-- `OPENROUTER_SITE_URL` dəyərini production domeninə dəyişin.
-- `ALLOW_DEMO_AI=false` saxlayın ki, anonim istifadəçilər OpenRouter xərcini yarada bilməsin.
-- HTTPS üzərində build deploy edin; service worker yalnız təhlükəsiz origin-də (və localhost-da) işləyir.
+- Caddy `/v1/*` sorğularını API-yə, qalanını web konteynerinə yönləndirməlidir (eyni origin, CORS lazım deyil).
+- API-də `WEB_BASE_URL` web-in ictimai origin-nə bərabər olmalıdır (e-poçt linkləri üçün).
+- HTTPS üzərində deploy edin: session cookie-si production-da `Secure` işarəlidir və service worker yalnız təhlükəsiz origin-də işləyir.
+- AI köməkçi (Tapşırıq Tap) API-yə köçürülənə qədər "Tezliklə" kimi göstərilir (roadmap MB-12).
 
 ## License
 
